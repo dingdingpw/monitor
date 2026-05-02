@@ -1,0 +1,4 @@
+{
+  "socket": "wss://www.monitor.party/ws",
+  "apiURL": "https://www.monitor.party"
+}

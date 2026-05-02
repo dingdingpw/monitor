@@ -1,0 +1,25 @@
+{
+  "reports": {},
+  "infos": {
+    "US-test-003": {
+      "name": "US-test-003",
+      "due_time": 0,
+      "buy_url": "https://example.com",
+      "seller": "seller1",
+      "price": "$5"
+    }
+  },
+  "planned": {
+    "US-test-001": {
+      "node_id": "US-test-001",
+      "created_at": 1777694933
+    },
+    "US-test-003": {
+      "node_id": "US-test-003",
+      "created_at": 1777700423
+    }
+  },
+  "settings": {
+    "site_name": "My Monitor"
+  }
+}
