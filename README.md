@@ -2,7 +2,7 @@
 
 Monitor Party 是一个轻量级 VPS / 服务器监控面板，包含中心端 `vps-server` 和采集端 `vps-agent`。中心端提供公开监控面板、管理员后台、Agent 安装命令生成、节点管理、购买信息展示和 Agent 二进制下载；Agent 负责上报 CPU、内存、硬盘、网络、负载和在线状态。
 
-默认公开地址为：`https://www.monitor.party`
+默认演示地址为：`https://www.monitor.party`
 
 ## 功能特性
 
