@@ -20,7 +20,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -50,13 +49,13 @@ type Server struct {
 
 func New(cfg Config) (*Server, error) {
 	if isWeakSecret(cfg.AuthSecret) {
-		return nil, errors.New("AUTH_SECRET must be set to a strong non-default value")
+		return nil, errors.New("AUTH_SECRET must not be empty or change-me")
 	}
 	if cfg.AdminUser == "" {
 		cfg.AdminUser = "admin"
 	}
 	if isWeakSecret(cfg.AdminPass) {
-		return nil, errors.New("ADMIN_PASS must be set to a strong non-default value")
+		return nil, errors.New("ADMIN_PASS must not be empty or change-me")
 	}
 	if cfg.PublicURL != "" {
 		publicURL, err := cleanPublicURL(cfg.PublicURL)
@@ -963,15 +962,17 @@ func psQuote(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
 }
 
-var nodeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$`)
-
 func validNodeID(value string) bool {
-	return nodeIDPattern.MatchString(strings.TrimSpace(value))
+	value = strings.TrimSpace(value)
+	if value == "" || len([]rune(value)) > 96 {
+		return false
+	}
+	return !strings.ContainsAny(value, "\x00\r\n\t/\\'\"`$;&|<>!*?[]{}()")
 }
 
 func isWeakSecret(value string) bool {
 	value = strings.TrimSpace(value)
-	return len(value) < 16 || value == "change-me" || value == "your-agent-token" || value == "your-auth-secret" || value == "your-admin-password"
+	return value == "" || value == "change-me"
 }
 
 func newAgentToken() (string, error) {

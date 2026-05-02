@@ -31,6 +31,19 @@ ask_secret() {
   printf "%s" "$value"
 }
 
+random_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return
+  fi
+  dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
+}
+
+is_weak_secret() {
+  value="$1"
+  [ -z "$value" ] || [ "$value" = "change-me" ]
+}
+
 arch_name() {
   case "$(uname -m)" in
     x86_64|amd64) echo "amd64" ;;
@@ -61,12 +74,23 @@ echo "VPS Monitor center server installer"
 echo "detected: linux/$ARCH"
 
 PUBLIC_URL="$(ask "Public URL" "https://www.monitor.party")"
-AUTH_SECRET="$(ask_secret "Legacy auth secret")"
+AUTH_SECRET="$(ask_secret "Internal secret (leave empty to generate)")"
 ADMIN_USER="$(ask "Admin username" "admin")"
-ADMIN_PASS="$(ask_secret "Admin password")"
+ADMIN_PASS="$(ask_secret "Admin password (leave empty to generate)")"
 ADDR="$(ask "Listen address" ":3000")"
 MAX_NODES="$(ask "Max nodes" "2000")"
 BIN_URL="$(ask "Binary download URL (empty for local file)" "")"
+
+GENERATED_AUTH_SECRET=0
+GENERATED_ADMIN_PASS=0
+if is_weak_secret "$AUTH_SECRET"; then
+  AUTH_SECRET="$(random_secret)"
+  GENERATED_AUTH_SECRET=1
+fi
+if is_weak_secret "$ADMIN_PASS"; then
+  ADMIN_PASS="$(random_secret)"
+  GENERATED_ADMIN_PASS=1
+fi
 
 install -d /etc/vps-monitor /usr/local/bin /var/lib/vps-monitor
 umask 077
@@ -138,3 +162,9 @@ if ! curl -fsS "http://127.0.0.1:$PORT/admin" 2>/dev/null | grep -q "monitor-par
 fi
 systemctl --no-pager --full status vps-server || true
 echo "server installed: $PUBLIC_URL"
+if [ "$GENERATED_AUTH_SECRET" = "1" ]; then
+  echo "generated internal AUTH_SECRET in /etc/vps-monitor/server.env"
+fi
+if [ "$GENERATED_ADMIN_PASS" = "1" ]; then
+  echo "generated admin login: $ADMIN_USER / $ADMIN_PASS"
+fi

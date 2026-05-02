@@ -68,9 +68,9 @@ sudo ./install-server-linux.sh
 
 ```text
 Public URL [https://www.monitor.party]
-Legacy auth secret
+Internal secret (leave empty to generate)
 Admin username [admin]
-Admin password
+Admin password (leave empty to generate)
 Listen address [:3000]
 Max nodes [2000]
 Binary download URL (empty for local file)
@@ -79,14 +79,16 @@ Binary download URL (empty for local file)
 说明：
 
 - `Public URL`：公网访问地址，生产环境必须使用 HTTPS，例如 `https://monitor.example.com`。
-- `Legacy auth secret`：强随机字符串，至少 16 位，用作兼容性安全密钥。
+- `Internal secret`：中心端内部安全密钥，不是后台登录密码；留空会自动生成。
 - `Admin username`：后台管理员用户名，默认 `admin`。
-- `Admin password`：后台管理员密码，必须是强随机密码，至少 16 位。
+- `Admin password`：后台管理员登录密码，和 `Internal secret` 不需要一致；留空会自动生成。
 - `Listen address`：中心端监听地址，默认 `:3000`。
 - `Max nodes`：最大节点数，默认 `2000`。
 - `Binary download URL`：留空时使用当前目录的本地二进制。
 
 中心端现在不需要填写 `Agent token`。Agent token 会在后台为每个节点单独生成。
+
+`Internal secret` 和 `Admin password` 不是同一个东西，不需要一致。前者用于中心端内部安全用途，后者只用于 `/admin` 后台登录。
 
 安装完成后访问：
 
@@ -148,9 +150,9 @@ server {
 Node ID 规则：
 
 ```text
-只能使用 A-Z a-z 0-9 . _ : -
+支持中文、英文、数字和常见分隔符
 长度 1-96
-必须以字母或数字开头
+不能包含换行、引号、斜杠、反斜杠、Shell 控制符或 HTML 尖括号
 ```
 
 建议使用地区前缀：
@@ -160,6 +162,7 @@ US-node-001
 JP-node-001
 HK-node-001
 DE-node-001
+CN-上海-腾讯云
 ```
 
 ## Linux Agent
@@ -408,7 +411,7 @@ uninstall-agent-windows.ps1
 
 ### 中心端启动失败
 
-检查 `AUTH_SECRET` 和 `ADMIN_PASS` 是否为空、是否仍是 `change-me`、长度是否小于 16。新版本会拒绝默认弱密钥启动。
+检查 `AUTH_SECRET` 和 `ADMIN_PASS` 是否为空、是否仍是 `change-me`。新版本只拒绝空值和默认弱值。
 
 ```bash
 sudo journalctl -u vps-server -n 100 --no-pager
@@ -464,7 +467,7 @@ proxy_set_header Connection "upgrade";
 
 ## 安全建议
 
-- `AUTH_SECRET` 和 `ADMIN_PASS` 必须使用强随机字符串。
+- `AUTH_SECRET` 和 `ADMIN_PASS` 不需要一致；不要留空，不要使用 `change-me`。
 - 不要把真实生产环境的 `server.env`、`config.env`、token、密码提交到 GitHub。
 - 生产环境必须使用 HTTPS。
 - 管理后台建议配合防火墙、Cloudflare Access 或 Nginx Basic Auth 做额外保护。

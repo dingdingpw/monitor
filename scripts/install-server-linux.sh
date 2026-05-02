@@ -7,6 +7,19 @@ ADMIN_PASS=""
 PUBLIC_URL=""
 BIN_URL=""
 
+random_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return
+  fi
+  dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
+}
+
+is_weak_secret() {
+  value="$1"
+  [ -z "$value" ] || [ "$value" = "change-me" ]
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --auth-secret) AUTH_SECRET="$2"; shift 2 ;;
@@ -18,13 +31,18 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -z "$ADMIN_PASS" ]; then
-  ADMIN_PASS="$AUTH_SECRET"
+if is_weak_secret "$AUTH_SECRET"; then
+  AUTH_SECRET="$(random_secret)"
+  GENERATED_AUTH_SECRET="1"
+else
+  GENERATED_AUTH_SECRET="0"
 fi
 
-if [ -z "$AUTH_SECRET" ]; then
-  echo "usage: install-server-linux.sh --auth-secret SECRET [--admin-user admin] [--admin-pass PASSWORD] [--public-url https://monitor.example.com] [--bin-url URL]" >&2
-  exit 2
+if is_weak_secret "$ADMIN_PASS"; then
+  ADMIN_PASS="$(random_secret)"
+  GENERATED_ADMIN_PASS="1"
+else
+  GENERATED_ADMIN_PASS="0"
 fi
 
 install -d /etc/vps-monitor /usr/local/bin /var/lib/vps-monitor
@@ -73,3 +91,9 @@ EOF
 systemctl daemon-reload
 systemctl enable --now vps-server
 echo "vps-server installed"
+if [ "$GENERATED_AUTH_SECRET" = "1" ]; then
+  echo "generated internal AUTH_SECRET in /etc/vps-monitor/server.env"
+fi
+if [ "$GENERATED_ADMIN_PASS" = "1" ]; then
+  echo "generated admin login: $ADMIN_USER / $ADMIN_PASS"
+fi

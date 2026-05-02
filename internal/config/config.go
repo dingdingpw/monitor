@@ -103,16 +103,11 @@ func (c Config) Validate() error {
 }
 
 func validNodeID(value string) bool {
-	if value == "" || len(value) > 96 {
+	value = strings.TrimSpace(value)
+	if value == "" || len([]rune(value)) > 96 {
 		return false
 	}
-	for i, r := range value {
-		ok := r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == ':' || r == '-'
-		if !ok || i == 0 && (r == '.' || r == '_' || r == ':' || r == '-') {
-			return false
-		}
-	}
-	return true
+	return !strings.ContainsAny(value, "\x00\r\n\t/\\'\"`$;&|<>!*?[]{}()")
 }
 
 func apply(c *Config, key, value string) error {
