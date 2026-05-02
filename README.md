@@ -472,7 +472,9 @@ proxy_set_header Connection "upgrade";
 - 生产环境必须使用 HTTPS。
 - 管理后台建议配合防火墙、Cloudflare Access 或 Nginx Basic Auth 做额外保护。
 - 节点安装命令包含该节点明文 token，只在可信终端执行，不要公开粘贴。
+
 ## 友链
 
 - [Linux.do](https://linux.do/)
 
+## License
