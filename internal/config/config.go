@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"runtime"
 	"strconv"
@@ -79,16 +80,39 @@ func (c Config) Validate() error {
 	if c.Server == "" {
 		return errors.New("SERVER is required")
 	}
+	u, err := url.Parse(c.Server)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return errors.New("SERVER must be an absolute http or https URL")
+	}
+	if u.Scheme != "https" && !strings.HasPrefix(u.Host, "127.0.0.1") && !strings.HasPrefix(u.Host, "localhost") {
+		return errors.New("SERVER must use https outside localhost")
+	}
 	if c.Token == "" {
 		return errors.New("TOKEN is required")
 	}
 	if c.NodeID == "" {
 		return errors.New("NODE_ID is required")
 	}
+	if !validNodeID(c.NodeID) {
+		return errors.New("NODE_ID contains invalid characters")
+	}
 	if c.BasicInterval < time.Second {
 		return errors.New("BASIC_INTERVAL must be >= 1s")
 	}
 	return nil
+}
+
+func validNodeID(value string) bool {
+	if value == "" || len(value) > 96 {
+		return false
+	}
+	for i, r := range value {
+		ok := r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == ':' || r == '-'
+		if !ok || i == 0 && (r == '.' || r == '_' || r == ':' || r == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func apply(c *Config, key, value string) error {

@@ -70,6 +70,7 @@ MOUNTS="$(ask "Mounts" "auto")"
 BIN_URL="$(ask "Binary download URL (empty for local file)" "")"
 
 install -d /etc/vps-agent /usr/local/bin
+umask 077
 
 if [ -n "$BIN_URL" ]; then
   TMP="$(mktemp)"
@@ -92,6 +93,7 @@ MOUNTS=$MOUNTS
 NETWORK_EXCLUDE=lo,docker*,veth*,br-*
 DISK_EXCLUDE_FS=tmpfs,devtmpfs,overlay,squashfs,proc,sysfs,cgroup,cgroup2
 EOF
+chmod 600 /etc/vps-agent/config.env
 
 cat >/etc/systemd/system/vps-agent.service <<'EOF'
 [Unit]

@@ -61,7 +61,6 @@ echo "VPS Monitor center server installer"
 echo "detected: linux/$ARCH"
 
 PUBLIC_URL="$(ask "Public URL" "https://www.monitor.party")"
-AGENT_TOKEN="$(ask_secret "Agent token")"
 AUTH_SECRET="$(ask_secret "Legacy auth secret")"
 ADMIN_USER="$(ask "Admin username" "admin")"
 ADMIN_PASS="$(ask_secret "Admin password")"
@@ -70,6 +69,7 @@ MAX_NODES="$(ask "Max nodes" "2000")"
 BIN_URL="$(ask "Binary download URL (empty for local file)" "")"
 
 install -d /etc/vps-monitor /usr/local/bin /var/lib/vps-monitor
+umask 077
 
 systemctl stop vps-server 2>/dev/null || true
 pkill -f '/usr/local/bin/vps-server' 2>/dev/null || true
@@ -102,7 +102,6 @@ fi
 
 cat >/etc/vps-monitor/server.env <<EOF
 ADDR=$ADDR
-AGENT_TOKEN=$AGENT_TOKEN
 AUTH_SECRET=$AUTH_SECRET
 ADMIN_USER=$ADMIN_USER
 ADMIN_PASS=$ADMIN_PASS
@@ -110,6 +109,7 @@ PUBLIC_URL=$PUBLIC_URL
 DATA_PATH=/var/lib/vps-monitor/server.json
 MAX_NODES=$MAX_NODES
 EOF
+chmod 600 /etc/vps-monitor/server.env
 
 cat >/etc/systemd/system/vps-server.service <<'EOF'
 [Unit]

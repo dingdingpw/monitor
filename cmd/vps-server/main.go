@@ -12,10 +12,9 @@ import (
 func main() {
 	cfg := server.Config{
 		Addr:        env("ADDR", ":3000"),
-		AuthSecret:  env("AUTH_SECRET", "change-me"),
+		AuthSecret:  os.Getenv("AUTH_SECRET"),
 		AdminUser:   env("ADMIN_USER", "admin"),
-		AdminPass:   env("ADMIN_PASS", env("AUTH_SECRET", "change-me")),
-		AgentToken:  env("AGENT_TOKEN", "change-me"),
+		AdminPass:   os.Getenv("ADMIN_PASS"),
 		DataPath:    env("DATA_PATH", "data/server.json"),
 		PublicURL:   os.Getenv("PUBLIC_URL"),
 		OfflineWait: envDuration("OFFLINE_WAIT", 60*time.Second),

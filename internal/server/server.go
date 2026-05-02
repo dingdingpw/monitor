@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
@@ -16,8 +17,10 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -31,7 +34,6 @@ type Config struct {
 	AuthSecret  string
 	AdminUser   string
 	AdminPass   string
-	AgentToken  string
 	DataPath    string
 	PublicURL   string
 	OfflineWait time.Duration
@@ -47,17 +49,21 @@ type Server struct {
 }
 
 func New(cfg Config) (*Server, error) {
-	if cfg.AuthSecret == "" {
-		cfg.AuthSecret = "change-me"
+	if isWeakSecret(cfg.AuthSecret) {
+		return nil, errors.New("AUTH_SECRET must be set to a strong non-default value")
 	}
 	if cfg.AdminUser == "" {
 		cfg.AdminUser = "admin"
 	}
-	if cfg.AdminPass == "" {
-		cfg.AdminPass = cfg.AuthSecret
+	if isWeakSecret(cfg.AdminPass) {
+		return nil, errors.New("ADMIN_PASS must be set to a strong non-default value")
 	}
-	if cfg.AgentToken == "" {
-		cfg.AgentToken = "change-me"
+	if cfg.PublicURL != "" {
+		publicURL, err := cleanPublicURL(cfg.PublicURL)
+		if err != nil {
+			return nil, err
+		}
+		cfg.PublicURL = publicURL
 	}
 	if cfg.DataPath == "" {
 		cfg.DataPath = "data/server.json"
@@ -111,6 +117,10 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
+	if !validAdminOrigin(r) {
+		http.Error(w, "invalid request origin", http.StatusForbidden)
+		return
+	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -120,6 +130,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !constantEqual(req.Username, s.cfg.AdminUser) || !constantEqual(req.Password, s.cfg.AdminPass) {
+		time.Sleep(300 * time.Millisecond)
 		http.Error(w, "invalid admin credentials", http.StatusUnauthorized)
 		return
 	}
@@ -150,6 +161,10 @@ func (s *Server) handleAdminNodes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "admin login required", http.StatusUnauthorized)
 		return
 	}
+	if r.Method != http.MethodGet && !validAdminOrigin(r) {
+		http.Error(w, "invalid request origin", http.StatusForbidden)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, s.store.AdminNodes(s.cfg.OfflineWait))
@@ -162,7 +177,7 @@ func (s *Server) handleAdminNodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.NodeID = strings.TrimSpace(req.NodeID)
-		if req.NodeID == "" || len(req.NodeID) > 96 {
+		if !validNodeID(req.NodeID) {
 			http.Error(w, "invalid node_id", http.StatusBadRequest)
 			return
 		}
@@ -184,13 +199,19 @@ func (s *Server) handleAdminInstallCommand(w http.ResponseWriter, r *http.Reques
 	}
 	nodeID := strings.TrimSpace(r.URL.Query().Get("node_id"))
 	platform := strings.TrimSpace(r.URL.Query().Get("platform"))
-	if nodeID == "" {
-		http.Error(w, "node_id is required", http.StatusBadRequest)
+	if !validNodeID(nodeID) {
+		http.Error(w, "invalid node_id", http.StatusBadRequest)
 		return
 	}
+	token, err := newAgentToken()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.store.SetNodeToken(nodeID, hashToken(token))
 	base := s.externalBase(r)
-	linux := fmt.Sprintf("curl -fsSL %s/install/agent-linux.sh | sudo sh -s -- --server %s --token %s --node-id %s", base, base, shellQuote(s.cfg.AgentToken), shellQuote(nodeID))
-	windows := fmt.Sprintf("powershell -ExecutionPolicy Bypass -Command \"iwr %s/install/agent-windows.ps1 -UseBasicParsing | iex; Install-VpsAgent -Server '%s' -Token '%s' -NodeId '%s'\"", base, base, psQuote(s.cfg.AgentToken), psQuote(nodeID))
+	linux := fmt.Sprintf("curl -fsSL %s/install/agent-linux.sh | sudo sh -s -- --server %s --token %s --node-id %s", base, base, shellQuote(token), shellQuote(nodeID))
+	windows := fmt.Sprintf("powershell -ExecutionPolicy Bypass -Command \"iwr %s/install/agent-windows.ps1 -UseBasicParsing | iex; Install-VpsAgent -Server '%s' -Token '%s' -NodeId '%s'\"", base, base, psQuote(token), psQuote(nodeID))
 	linuxUninstall := fmt.Sprintf("curl -fsSL %s/uninstall/agent-linux.sh | sudo sh", base)
 	windowsUninstall := fmt.Sprintf("powershell -ExecutionPolicy Bypass -Command \"iwr %s/uninstall/agent-windows.ps1 -UseBasicParsing | iex\"", base)
 	if platform == "linux" {
@@ -243,11 +264,9 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if metrics.NodeID == "" {
-		metrics.NodeID = r.Header.Get("X-Node-ID")
-	}
-	if len(metrics.NodeID) > 96 {
-		http.Error(w, "node_id too long", http.StatusBadRequest)
+	metrics.NodeID = r.Header.Get("X-Node-ID")
+	if !validNodeID(metrics.NodeID) {
+		http.Error(w, "invalid node_id", http.StatusBadRequest)
 		return
 	}
 	metrics.Timestamp = time.Now().Unix()
@@ -278,6 +297,10 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, s.store.Settings)
 	case http.MethodPost:
+		if !validAdminOrigin(r) {
+			http.Error(w, "invalid request origin", http.StatusForbidden)
+			return
+		}
 		var req Settings
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -309,8 +332,13 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "admin login required", http.StatusUnauthorized)
 			return
 		}
-		if req.Name == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
+		if !validAdminOrigin(r) {
+			http.Error(w, "invalid request origin", http.StatusForbidden)
+			return
+		}
+		req.Name = strings.TrimSpace(req.Name)
+		if !validNodeID(req.Name) {
+			http.Error(w, "invalid node_id", http.StatusBadRequest)
 			return
 		}
 		s.store.UpsertInfo(req)
@@ -334,6 +362,14 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.adminAuthorized(r) {
 		http.Error(w, "admin login required", http.StatusUnauthorized)
+		return
+	}
+	if !validAdminOrigin(r) {
+		http.Error(w, "invalid request origin", http.StatusForbidden)
+		return
+	}
+	if !validNodeID(req.Name) {
+		http.Error(w, "invalid node_id", http.StatusBadRequest)
 		return
 	}
 	s.store.Delete(req.Name)
@@ -405,10 +441,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 		_, err := readWS(conn)
 		if err != nil {
 			return
 		}
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		if err := writeWSBytes(rw, s.cachedHostsJSON()); err != nil {
 			return
 		}
@@ -494,9 +532,6 @@ func (s *Server) requestBase(r *http.Request) string {
 		scheme = "https"
 	}
 	host := r.Host
-	if forwarded := r.Header.Get("X-Forwarded-Host"); forwarded != "" {
-		host = forwarded
-	}
 	return scheme + "://" + host
 }
 
@@ -506,9 +541,6 @@ func (s *Server) externalBase(r *http.Request) string {
 		scheme = "https"
 	}
 	host := r.Host
-	if forwarded := r.Header.Get("X-Forwarded-Host"); forwarded != "" {
-		host = forwarded
-	}
 	if host != "" && !strings.HasPrefix(host, "127.0.0.1") && !strings.HasPrefix(host, "localhost") {
 		return scheme + "://" + host
 	}
@@ -516,10 +548,12 @@ func (s *Server) externalBase(r *http.Request) string {
 }
 
 func (s *Server) agentAuthorized(r *http.Request) bool {
-	if r.Header.Get("X-Node-ID") == "" {
+	nodeID := strings.TrimSpace(r.Header.Get("X-Node-ID"))
+	if !validNodeID(nodeID) {
 		return false
 	}
-	return r.Header.Get("Authorization") == "Bearer "+s.cfg.AgentToken
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return token != "" && s.store.ValidNodeToken(nodeID, hashToken(token))
 }
 
 func (s *Server) adminAuthorized(r *http.Request) bool {
@@ -635,6 +669,7 @@ type Settings struct {
 type PlannedNode struct {
 	NodeID    string `json:"node_id"`
 	CreatedAt int64  `json:"created_at"`
+	TokenHash string `json:"token_hash,omitempty"`
 }
 
 type AdminNode struct {
@@ -756,6 +791,29 @@ func (s *Store) AddPlannedNode(nodeID string, maxNodes int) error {
 	s.Planned[nodeID] = PlannedNode{NodeID: nodeID, CreatedAt: time.Now().Unix()}
 	s.saveLocked()
 	return nil
+}
+
+func (s *Store) SetNodeToken(nodeID, tokenHash string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	planned := s.Planned[nodeID]
+	planned.NodeID = nodeID
+	if planned.CreatedAt == 0 {
+		planned.CreatedAt = time.Now().Unix()
+	}
+	planned.TokenHash = tokenHash
+	s.Planned[nodeID] = planned
+	s.saveLocked()
+}
+
+func (s *Store) ValidNodeToken(nodeID, tokenHash string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	planned, ok := s.Planned[nodeID]
+	if !ok || planned.TokenHash == "" || tokenHash == "" {
+		return false
+	}
+	return constantEqual(planned.TokenHash, tokenHash)
 }
 
 func (s *Store) UpsertInfo(info HostInfo) {
@@ -903,6 +961,57 @@ func shellQuote(value string) string {
 
 func psQuote(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
+}
+
+var nodeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$`)
+
+func validNodeID(value string) bool {
+	return nodeIDPattern.MatchString(strings.TrimSpace(value))
+}
+
+func isWeakSecret(value string) bool {
+	value = strings.TrimSpace(value)
+	return len(value) < 16 || value == "change-me" || value == "your-agent-token" || value == "your-auth-secret" || value == "your-admin-password"
+}
+
+func newAgentToken() (string, error) {
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf[:]), nil
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func cleanPublicURL(value string) (string, error) {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	u, err := url.Parse(value)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return "", errors.New("PUBLIC_URL must be an absolute http or https URL")
+	}
+	if u.Scheme != "https" && !strings.HasPrefix(u.Host, "127.0.0.1") && !strings.HasPrefix(u.Host, "localhost") {
+		return "", errors.New("PUBLIC_URL must use https outside localhost")
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
+}
+
+func validAdminOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 func upgradeWebSocket(w http.ResponseWriter, r *http.Request) (net.Conn, *bufioWriter, error) {

@@ -58,13 +58,13 @@ async function loadSettings(){try{const s=await api('/api/admin/settings');siteN
 async function saveSettings(){try{await api('/api/admin/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({site_name:siteName.value.trim()||'Monitor Party'})});toast('设置已保存')}catch(e){toast(e.message)}}
 async function addNode(){const id=nodeId.value.trim();if(!id){toast('请输入节点 ID');return}try{await api('/api/admin/nodes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({node_id:id})});await showCommands(id);await loadNodes();toast('节点已添加')}catch(e){toast(e.message)}}
 async function showCommands(id){const r=await api('/api/admin/install-command?node_id='+encodeURIComponent(id));linuxCmd.value=r.linux;windowsCmd.value=r.windows;linuxUninstallCmd.value=r.linux_uninstall;windowsUninstallCmd.value=r.windows_uninstall;commands.classList.remove('hidden');commands.scrollIntoView({behavior:'smooth',block:'start'})}
-function esc(v){return String(v||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')}
-function jsq(v){return String(v||'').replaceAll('\\','\\\\').replaceAll("'","\\'")}
 function dateValue(v){if(!v)return '';const t=Number(v);const d=new Date(t>0&&t<1000000000000?t*1000:v);if(isNaN(d.getTime()))return '';return d.toISOString().slice(0,10)}
 function dateText(v){return dateValue(v)||'-'}
 function validDueDate(v){return !v||/^\d{4}-\d{2}-\d{2}$/.test(v)}
 function normalizeDueDateInput(){if(!validDueDate(editDueTime.value)){editDueTime.value='';toast('到期时间年份只能是 4 位')}}
-async function loadNodes(){await loadSettings();const list=await api('/api/admin/nodes');window.nodeCache=list;totalCount.textContent=list.length;onlineCount.textContent=list.filter(function(n){return n.online}).length;offlineCount.textContent=list.filter(function(n){return !n.online}).length;nodeRows.innerHTML=list.map(function(n){const id=esc(n.node_id);const js=jsq(n.node_id);const info=n.info||{};return '<tr><td><b>'+id+'</b></td><td class="'+(n.online?'ok':'off')+'">'+(n.online?'在线':'待安装/离线')+'</td><td>'+esc(info.seller||'-')+'</td><td>'+esc(info.price||'-')+'</td><td>'+esc(info.cycle||'-')+'</td><td>'+esc(info.bandwidth||'-')+'</td><td>'+esc(info.traffic||'-')+'</td><td>'+esc(dateText(info.due_time))+'</td><td>'+(n.last_seen?new Date(n.last_seen*1000).toLocaleString():'-')+'</td><td><button class="ghost" onclick="showCommands(\''+js+'\')">命令</button> <button class="ghost" onclick="editNode(\''+js+'\')">编辑</button> <button class="danger" onclick="deleteNode(\''+js+'\')">删除</button></td></tr>'}).join('')}
+function cell(text,className){const td=document.createElement('td');if(className)td.className=className;td.textContent=text;return td}
+function actionButton(text,className,handler){const btn=document.createElement('button');btn.className=className;btn.type='button';btn.textContent=text;btn.addEventListener('click',handler);return btn}
+async function loadNodes(){await loadSettings();const list=await api('/api/admin/nodes');window.nodeCache=list;totalCount.textContent=list.length;onlineCount.textContent=list.filter(function(n){return n.online}).length;offlineCount.textContent=list.filter(function(n){return !n.online}).length;nodeRows.replaceChildren();list.forEach(function(n){const info=n.info||{};const tr=document.createElement('tr');const nameCell=document.createElement('td');const bold=document.createElement('b');bold.textContent=n.node_id;nameCell.appendChild(bold);tr.appendChild(nameCell);tr.appendChild(cell(n.online?'在线':'待安装/离线',n.online?'ok':'off'));tr.appendChild(cell(info.seller||'-'));tr.appendChild(cell(info.price||'-'));tr.appendChild(cell(info.cycle||'-'));tr.appendChild(cell(info.bandwidth||'-'));tr.appendChild(cell(info.traffic||'-'));tr.appendChild(cell(dateText(info.due_time)));tr.appendChild(cell(n.last_seen?new Date(n.last_seen*1000).toLocaleString():'-'));const actions=document.createElement('td');actions.appendChild(actionButton('命令','ghost',function(){showCommands(n.node_id)}));actions.appendChild(document.createTextNode(' '));actions.appendChild(actionButton('编辑','ghost',function(){editNode(n.node_id)}));actions.appendChild(document.createTextNode(' '));actions.appendChild(actionButton('删除','danger',function(){deleteNode(n.node_id)}));tr.appendChild(actions);nodeRows.appendChild(tr)})}
 function editNode(id){const n=(window.nodeCache||[]).find(function(x){return x.node_id===id})||{};const info=n.info||{};editNodeName.value=id;editSeller.value=info.seller||'';editPrice.value=info.price||'';editCycle.value=info.cycle||'';editBandwidth.value=info.bandwidth||'';editTraffic.value=info.traffic||'';editDueTime.value=dateValue(info.due_time);editBuyUrl.value=info.buy_url||'';editShowPurchase.checked=!!info.show_purchase_info;editInfo.classList.remove('hidden');editInfo.scrollIntoView({behavior:'smooth',block:'start'})}
 function hideEditInfo(){editInfo.classList.add('hidden')}
 async function saveNodeInfo(){if(!validDueDate(editDueTime.value)){toast('到期时间年份只能是 4 位');return}try{const due=editDueTime.value?new Date(editDueTime.value+'T00:00:00').getTime():0;await api('/info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editNodeName.value,seller:editSeller.value,price:editPrice.value,cycle:editCycle.value,bandwidth:editBandwidth.value,traffic:editTraffic.value,buy_url:editBuyUrl.value,due_time:due,show_purchase_info:editShowPurchase.checked})});hideEditInfo();await loadNodes();toast('主机信息已保存')}catch(e){toast(e.message)}}
@@ -105,6 +105,7 @@ case "$(uname -m)" in
 esac
 
 install -d /etc/vps-agent /usr/local/bin
+umask 077
 TMP="$(mktemp)"
 curl -fsSL "%s/download/vps-agent-linux-$ARCH" -o "$TMP"
 install -m 0755 "$TMP" /usr/local/bin/vps-agent
@@ -121,6 +122,7 @@ MOUNTS=auto
 NETWORK_EXCLUDE=lo,docker*,veth*,br-*
 DISK_EXCLUDE_FS=tmpfs,devtmpfs,overlay,squashfs,proc,sysfs,cgroup,cgroup2
 EOF
+chmod 600 /etc/vps-agent/config.env
 
 cat >/etc/systemd/system/vps-agent.service <<'EOF'
 [Unit]
@@ -169,6 +171,7 @@ function Install-VpsAgent {
   $configDir = "C:\\ProgramData\\vps-agent"
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null
   New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+  icacls $configDir /inheritance:r /grant:r "Administrators:(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
 
   $tmp = Join-Path $env:TEMP "vps-agent.exe"
   Invoke-WebRequest "%s/download/vps-agent-windows-$arch.exe" -OutFile $tmp -UseBasicParsing
@@ -184,6 +187,7 @@ DISK_INTERVAL=30s
 CONNECTION_INTERVAL=60s
 MOUNTS=auto
 "@ | Set-Content -Encoding ASCII "$configDir\config.env"
+  icacls "$configDir\config.env" /inheritance:r /grant:r "Administrators:F" "SYSTEM:F" | Out-Null
 
   $service = Get-Service -Name "vps-agent" -ErrorAction SilentlyContinue
   if ($service) {

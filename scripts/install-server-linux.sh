@@ -1,7 +1,6 @@
 #!/usr/bin/env sh
 set -eu
 
-AGENT_TOKEN=""
 AUTH_SECRET=""
 ADMIN_USER="admin"
 ADMIN_PASS=""
@@ -10,7 +9,6 @@ BIN_URL=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --agent-token) AGENT_TOKEN="$2"; shift 2 ;;
     --auth-secret) AUTH_SECRET="$2"; shift 2 ;;
     --admin-user) ADMIN_USER="$2"; shift 2 ;;
     --admin-pass) ADMIN_PASS="$2"; shift 2 ;;
@@ -24,12 +22,13 @@ if [ -z "$ADMIN_PASS" ]; then
   ADMIN_PASS="$AUTH_SECRET"
 fi
 
-if [ -z "$AGENT_TOKEN" ] || [ -z "$AUTH_SECRET" ]; then
-  echo "usage: install-server-linux.sh --agent-token TOKEN --auth-secret SECRET [--admin-user admin] [--admin-pass PASSWORD] [--public-url https://monitor.example.com] [--bin-url URL]" >&2
+if [ -z "$AUTH_SECRET" ]; then
+  echo "usage: install-server-linux.sh --auth-secret SECRET [--admin-user admin] [--admin-pass PASSWORD] [--public-url https://monitor.example.com] [--bin-url URL]" >&2
   exit 2
 fi
 
 install -d /etc/vps-monitor /usr/local/bin /var/lib/vps-monitor
+umask 077
 
 if [ -n "$BIN_URL" ]; then
   TMP="$(mktemp)"
@@ -46,13 +45,13 @@ fi
 
 cat >/etc/vps-monitor/server.env <<EOF
 ADDR=:3000
-AGENT_TOKEN=$AGENT_TOKEN
 AUTH_SECRET=$AUTH_SECRET
 ADMIN_USER=$ADMIN_USER
 ADMIN_PASS=$ADMIN_PASS
 PUBLIC_URL=$PUBLIC_URL
 DATA_PATH=/var/lib/vps-monitor/server.json
 EOF
+chmod 600 /etc/vps-monitor/server.env
 
 cat >/etc/systemd/system/vps-server.service <<'EOF'
 [Unit]

@@ -64,6 +64,7 @@ $installDir = "C:\Program Files\vps-agent"
 $configDir = "C:\ProgramData\vps-agent"
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+icacls $configDir /inheritance:r /grant:r "Administrators:(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
 
 Copy-Item $BinaryPath "$installDir\vps-agent.exe" -Force
 @"
@@ -75,6 +76,7 @@ DISK_INTERVAL=$DiskInterval
 CONNECTION_INTERVAL=$ConnectionInterval
 MOUNTS=auto
 "@ | Set-Content -Encoding ASCII "$configDir\config.env"
+icacls "$configDir\config.env" /inheritance:r /grant:r "Administrators:F" "SYSTEM:F" | Out-Null
 
 $service = Get-Service -Name "vps-agent" -ErrorAction SilentlyContinue
 if ($service) {
