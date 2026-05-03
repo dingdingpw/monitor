@@ -16,6 +16,10 @@ sudo cp /var/lib/vps-monitor/server.json /var/lib/vps-monitor/server.json.bak.$(
 
 ## 本次更新
 
+- Windows Agent 现在支持真正的 Windows Service 模式，服务启动/停止会响应系统服务管理器，不再以普通控制台程序方式注册。
+- Windows 安装脚本修复 TLS 1.2、服务创建、中文 Node ID 和 UTF-8 BOM 问题，配置文件改为 UTF-8 无 BOM 写入。
+- Agent 配置解析兼容带 BOM 的 `config.env`，避免 Windows PowerShell 5.1 写入 BOM 后解析失败。
+- Release 构建脚本改为低并发 `go build -p 1`，降低多平台编译时内存占用，并在构建失败时立即中断。
 - Agent 新增系统/负载采集字段：真实主机名、发行版、内核、CPU 架构、虚拟化、CPU 型号、物理/逻辑核心、磁盘读写速率和进程数。
 - Server 将新增 Agent 字段透传到 WebSocket 的 `Host` / `State` 数据中，前台展开节点详情即可查看。
 - 前台详情页补充系统、内核、CPU、磁盘读写、进程、TCP / UDP、运行时长、数据更新时间等展示。

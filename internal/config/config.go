@@ -67,7 +67,7 @@ func Load(path string) (Config, error) {
 		if !ok {
 			return Config{}, fmt.Errorf("invalid config line %d", lineNo)
 		}
-		key = strings.TrimSpace(key)
+		key = strings.TrimPrefix(strings.TrimSpace(key), "\ufeff")
 		value = trimValue(value)
 		if err := apply(&cfg, key, value); err != nil {
 			return Config{}, fmt.Errorf("invalid config line %d: %w", lineNo, err)

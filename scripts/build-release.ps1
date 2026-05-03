@@ -42,9 +42,10 @@ function Build-One($cmd, $name, $target) {
   if ($target.Arm) { $suffix = "${suffix}v$($target.Arm)" }
   $ext = ""
   if ($target.OS -eq "windows") { $ext = ".exe" }
-  $out = Join-Path $release "$name-$suffix$ext"
-  Write-Host "building $out"
-  go build -trimpath -ldflags "-s -w" -o $out $cmd
+	$out = Join-Path $release "$name-$suffix$ext"
+	Write-Host "building $out"
+	go build -p 1 -trimpath -ldflags "-s -w" -o $out $cmd
+	if ($LASTEXITCODE -ne 0) { throw "go build failed for $name-$suffix$ext" }
 }
 
 foreach ($target in $targets) {

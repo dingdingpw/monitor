@@ -13,7 +13,7 @@ New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 icacls $configDir /inheritance:r /grant:r "Administrators:(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
 
 Copy-Item $BinaryPath "$installDir\vps-agent.exe" -Force
-@"
+$configText = @"
 SERVER=$Server
 TOKEN=$Token
 NODE_ID=$NodeId
@@ -21,7 +21,8 @@ BASIC_INTERVAL=2s
 DISK_INTERVAL=30s
 CONNECTION_INTERVAL=60s
 MOUNTS=auto
-"@ | Set-Content -Encoding ASCII "$configDir\config.env"
+"@
+[System.IO.File]::WriteAllText("$configDir\config.env", $configText, (New-Object System.Text.UTF8Encoding($false)))
 icacls "$configDir\config.env" /inheritance:r /grant:r "Administrators:F" "SYSTEM:F" | Out-Null
 
 $service = Get-Service -Name "vps-agent" -ErrorAction SilentlyContinue

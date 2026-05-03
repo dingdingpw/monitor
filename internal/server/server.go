@@ -253,9 +253,9 @@ func (s *Server) handleAdminInstallCommand(w http.ResponseWriter, r *http.Reques
 	s.store.SetNodeToken(nodeID, hashToken(token))
 	base := s.externalBase(r)
 	linux := fmt.Sprintf("curl -fsSL %s/install/agent-linux.sh | sudo sh -s -- --server %s --token %s --node-id %s", base, base, shellQuote(token), shellQuote(nodeID))
-	windows := fmt.Sprintf("powershell -ExecutionPolicy Bypass -Command \"iwr %s/install/agent-windows.ps1 -UseBasicParsing | iex; Install-VpsAgent -Server '%s' -Token '%s' -NodeId '%s'\"", base, base, psQuote(token), psQuote(nodeID))
+	windows := fmt.Sprintf("powershell -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iwr %s/install/agent-windows.ps1 -UseBasicParsing | iex; Install-VpsAgent -Server '%s' -Token '%s' -NodeId '%s'\"", base, base, psQuote(token), psQuote(nodeID))
 	linuxUninstall := fmt.Sprintf("curl -fsSL %s/uninstall/agent-linux.sh | sudo sh", base)
-	windowsUninstall := fmt.Sprintf("powershell -ExecutionPolicy Bypass -Command \"iwr %s/uninstall/agent-windows.ps1 -UseBasicParsing | iex\"", base)
+	windowsUninstall := fmt.Sprintf("powershell -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iwr %s/uninstall/agent-windows.ps1 -UseBasicParsing | iex\"", base)
 	if platform == "linux" {
 		writeJSON(w, map[string]string{"command": linux})
 		return

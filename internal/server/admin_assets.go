@@ -148,6 +148,7 @@ echo "vps-agent installed: $NODE_ID -> $SERVER"
 `
 
 const windowsInstallTemplate = `$ErrorActionPreference = "Stop"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 function Install-VpsAgent {
   param(
@@ -180,7 +181,7 @@ function Install-VpsAgent {
   Copy-Item $tmp "$installDir\\vps-agent.exe" -Force
   Remove-Item $tmp -Force
 
-@"
+  $configText = @"
 SERVER=$Server
 TOKEN=$Token
 NODE_ID=$NodeId
@@ -188,18 +189,23 @@ BASIC_INTERVAL=2s
 DISK_INTERVAL=30s
 CONNECTION_INTERVAL=60s
 MOUNTS=auto
-"@ | Set-Content -Encoding ASCII "$configDir\config.env"
+"@
+  [System.IO.File]::WriteAllText("$configDir\config.env", $configText, (New-Object System.Text.UTF8Encoding($false)))
   icacls "$configDir\config.env" /inheritance:r /grant:r "Administrators:F" "SYSTEM:F" | Out-Null
 
   $service = Get-Service -Name "vps-agent" -ErrorAction SilentlyContinue
   if ($service) {
     Stop-Service vps-agent -ErrorAction SilentlyContinue
     sc.exe delete vps-agent | Out-Null
-    Start-Sleep -Seconds 1
+    for ($i = 0; $i -lt 10; $i++) {
+      Start-Sleep -Seconds 1
+      if (-not (Get-Service -Name "vps-agent" -ErrorAction SilentlyContinue)) { break }
+    }
   }
 
-  $binPath = ''"'' + $installDir + ''\vps-agent.exe" run --config "'' + $configDir + ''\config.env"''
-  sc.exe create vps-agent binPath= $binPath start= auto DisplayName= "VPS Monitor Agent" | Out-Null
+  $quote = [char]34
+  $binPath = $quote + $installDir + "\vps-agent.exe" + $quote + " run --config " + $quote + $configDir + "\config.env" + $quote
+  New-Service -Name "vps-agent" -BinaryPathName $binPath -DisplayName "VPS Monitor Agent" -StartupType Automatic | Out-Null
   Start-Service vps-agent
   Write-Host "vps-agent installed: $NodeId -> $Server"
 }

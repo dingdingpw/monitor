@@ -28,9 +28,9 @@ build_one() {
   out="$RELEASE/$name-$suffix$ext"
   echo "building $out"
   if [ -n "$goarm" ]; then
-    CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" go build -trimpath -ldflags "-s -w" -o "$out" "$cmd"
+    CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" go build -p 1 -trimpath -ldflags "-s -w" -o "$out" "$cmd"
   else
-    CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "-s -w" -o "$out" "$cmd"
+    CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -p 1 -trimpath -ldflags "-s -w" -o "$out" "$cmd"
   fi
 }
 
