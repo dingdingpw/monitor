@@ -4,8 +4,16 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 RELEASE="$ROOT/release"
 EMBED_BINS="$ROOT/internal/server/agent_bins"
+WEB="$ROOT/web"
+WEB_DIST="$WEB/dist"
+EMBED_WEB_DIST="$ROOT/internal/server/web/dist"
 mkdir -p "$RELEASE"
 mkdir -p "$EMBED_BINS"
+
+(cd "$WEB" && npm run build)
+rm -rf "$EMBED_WEB_DIST"
+mkdir -p "$(dirname "$EMBED_WEB_DIST")"
+cp -R "$WEB_DIST" "$EMBED_WEB_DIST"
 
 build_one() {
   cmd="$1"

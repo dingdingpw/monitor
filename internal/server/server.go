@@ -86,6 +86,8 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("/api/admin/me", s.handleAdminMe)
 	mux.HandleFunc("/api/admin/settings", s.handleAdminSettings)
 	mux.HandleFunc("/api/admin/nodes", s.handleAdminNodes)
+	mux.HandleFunc("/api/admin/nodes/export", s.handleAdminNodesExport)
+	mux.HandleFunc("/api/admin/nodes/import", s.handleAdminNodesImport)
 	mux.HandleFunc("/api/admin/install-command", s.handleAdminInstallCommand)
 	mux.HandleFunc("/install/agent-linux.sh", s.handleAgentLinuxInstaller)
 	mux.HandleFunc("/install/agent-windows.ps1", s.handleAgentWindowsInstaller)
@@ -189,6 +191,47 @@ func (s *Server) handleAdminNodes(w http.ResponseWriter, r *http.Request) {
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func (s *Server) handleAdminNodesExport(w http.ResponseWriter, r *http.Request) {
+	if !s.adminAuthorized(r) {
+		http.Error(w, "admin login required", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=monitor-nodes.json")
+	writeJSON(w, s.store.ExportNodes())
+}
+
+func (s *Server) handleAdminNodesImport(w http.ResponseWriter, r *http.Request) {
+	if !s.adminAuthorized(r) {
+		http.Error(w, "admin login required", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !validAdminOrigin(r) {
+		http.Error(w, "invalid request origin", http.StatusForbidden)
+		return
+	}
+	defer r.Body.Close()
+	var backup NodeBackup
+	if err := json.NewDecoder(io.LimitReader(r.Body, 10<<20)).Decode(&backup); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	imported, err := s.store.ImportNodes(backup, s.cfg.MaxNodes)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.cache.MarkDirty()
+	writeJSON(w, map[string]int{"imported": imported})
 }
 
 func (s *Server) handleAdminInstallCommand(w http.ResponseWriter, r *http.Request) {
@@ -679,6 +722,19 @@ type AdminNode struct {
 	Info      HostInfo `json:"info"`
 }
 
+type NodeBackup struct {
+	Version    int                `json:"version"`
+	ExportedAt int64              `json:"exported_at"`
+	Nodes      []NodeBackupRecord `json:"nodes"`
+}
+
+type NodeBackupRecord struct {
+	NodeID    string   `json:"node_id"`
+	CreatedAt int64    `json:"created_at"`
+	TokenHash string   `json:"token_hash,omitempty"`
+	Info      HostInfo `json:"info"`
+}
+
 type HostInfo struct {
 	Name       string `json:"name"`
 	DueTime    int64  `json:"due_time"`
@@ -700,10 +756,18 @@ type AkileHost struct {
 
 type AkileHostMeta struct {
 	Name            string `json:"Name"`
+	Hostname        string `json:"Hostname"`
 	Platform        string `json:"Platform"`
 	PlatformVersion string `json:"PlatformVersion"`
+	Kernel          string `json:"Kernel"`
+	Arch            string `json:"Arch"`
+	Virtualization  string `json:"Virtualization"`
 	CPU             []int  `json:"CPU"`
+	CPUModel        string `json:"CPUModel"`
+	PhysicalCores   int    `json:"PhysicalCores"`
+	LogicalCores    int    `json:"LogicalCores"`
 	MemTotal        uint64 `json:"MemTotal"`
+	SwapTotal       uint64 `json:"SwapTotal"`
 }
 
 type AkileHostState struct {
@@ -717,6 +781,11 @@ type AkileHostState struct {
 	NetOutTransfer uint64       `json:"NetOutTransfer"`
 	NetInSpeed     uint64       `json:"NetInSpeed"`
 	NetOutSpeed    uint64       `json:"NetOutSpeed"`
+	DiskReadSpeed  uint64       `json:"DiskReadSpeed"`
+	DiskWriteSpeed uint64       `json:"DiskWriteSpeed"`
+	TCP            int          `json:"TCP"`
+	UDP            int          `json:"UDP"`
+	Processes      int          `json:"Processes"`
 	Load1          float64      `json:"Load1"`
 	Load5          float64      `json:"Load5"`
 	Load15         float64      `json:"Load15"`
@@ -889,6 +958,75 @@ func (s *Store) AdminNodes(offlineWait time.Duration) []AdminNode {
 	return out
 }
 
+func (s *Store) ExportNodes() NodeBackup {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	names := map[string]bool{}
+	for name := range s.Planned {
+		names[name] = true
+	}
+	for name := range s.Infos {
+		names[name] = true
+	}
+	for name := range s.Reports {
+		names[name] = true
+	}
+	out := NodeBackup{Version: 1, ExportedAt: time.Now().Unix(), Nodes: make([]NodeBackupRecord, 0, len(names))}
+	for name := range names {
+		planned := s.Planned[name]
+		info := s.Infos[name]
+		info.AuthSecret = ""
+		out.Nodes = append(out.Nodes, NodeBackupRecord{NodeID: name, CreatedAt: planned.CreatedAt, TokenHash: planned.TokenHash, Info: info})
+	}
+	sort.Slice(out.Nodes, func(i, j int) bool { return out.Nodes[i].NodeID < out.Nodes[j].NodeID })
+	return out
+}
+
+func (s *Store) ImportNodes(backup NodeBackup, maxNodes int) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if backup.Version == 0 {
+		backup.Version = 1
+	}
+	if backup.Version != 1 {
+		return 0, fmt.Errorf("unsupported backup version")
+	}
+	imported := 0
+	now := time.Now().Unix()
+	for _, record := range backup.Nodes {
+		nodeID := strings.TrimSpace(record.NodeID)
+		if nodeID == "" && record.Info.Name != "" {
+			nodeID = strings.TrimSpace(record.Info.Name)
+		}
+		if !validNodeID(nodeID) {
+			return imported, fmt.Errorf("invalid node_id: %s", nodeID)
+		}
+		if _, exists := s.Planned[nodeID]; !exists && len(s.Planned) >= maxNodes {
+			return imported, fmt.Errorf("max nodes reached")
+		}
+		planned := s.Planned[nodeID]
+		planned.NodeID = nodeID
+		if record.CreatedAt > 0 {
+			planned.CreatedAt = record.CreatedAt
+		} else if planned.CreatedAt == 0 {
+			planned.CreatedAt = now
+		}
+		if record.TokenHash != "" {
+			planned.TokenHash = strings.TrimSpace(record.TokenHash)
+		}
+		s.Planned[nodeID] = planned
+		info := record.Info
+		info.Name = nodeID
+		info.AuthSecret = ""
+		s.Infos[nodeID] = info
+		imported++
+	}
+	if imported > 0 {
+		s.saveLocked()
+	}
+	return imported, nil
+}
+
 func (s *Store) saveLocked() {
 	if s.path == "" {
 		return
@@ -915,16 +1053,31 @@ func toAkileHost(m agent.Metrics) AkileHost {
 		diskTotal += disk.Total
 	}
 	platform := m.OS
+	if m.OSName != "" {
+		platform = m.OSName
+	}
 	if platform == "" {
 		platform = "unknown"
+	}
+	conns := agent.Connections{}
+	if m.Conns != nil {
+		conns = *m.Conns
 	}
 	return AkileHost{
 		Host: AkileHostMeta{
 			Name:            m.NodeID,
+			Hostname:        m.Hostname,
 			Platform:        platform,
-			PlatformVersion: m.Arch,
+			PlatformVersion: m.Kernel,
+			Kernel:          m.Kernel,
+			Arch:            m.Arch,
+			Virtualization:  m.Virtualization,
 			CPU:             make([]int, m.CPU.Cores),
+			CPUModel:        m.CPU.ModelName,
+			PhysicalCores:   m.CPU.PhysicalCores,
+			LogicalCores:    m.CPU.Cores,
 			MemTotal:        m.Memory.Total,
+			SwapTotal:       m.Swap.Total,
 		},
 		State: AkileHostState{
 			CPU:            m.CPU.UsagePercent,
@@ -937,6 +1090,11 @@ func toAkileHost(m agent.Metrics) AkileHost {
 			NetOutTransfer: m.Network.TxBytes,
 			NetInSpeed:     m.Network.RxRate,
 			NetOutSpeed:    m.Network.TxRate,
+			DiskReadSpeed:  m.DiskIO.ReadRate,
+			DiskWriteSpeed: m.DiskIO.WriteRate,
+			TCP:            conns.TCP,
+			UDP:            conns.UDP,
+			Processes:      m.Processes,
 			Load1:          m.Load.Load1,
 			Load5:          m.Load.Load5,
 			Load15:         m.Load.Load15,

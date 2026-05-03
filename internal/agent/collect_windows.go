@@ -183,6 +183,18 @@ func readConnections() (Connections, error) {
 	return Connections{TCP: windowsTCPCount(), UDP: windowsUDPCount()}, nil
 }
 
+func readDiskCounters() (diskCounters, error) {
+	return diskCounters{}, nil
+}
+
+func readHostInfo() HostStaticInfo {
+	return HostStaticInfo{OSName: "Windows"}
+}
+
+func readProcessCount() int {
+	return powershellCount("Get-Process | Measure-Object | Select-Object -ExpandProperty Count")
+}
+
 func filetimeToUint64(ft filetime) uint64 {
 	return uint64(ft.HighDateTime)<<32 | uint64(ft.LowDateTime)
 }

@@ -4,6 +4,25 @@ Monitor Party 是一个轻量级 VPS / 服务器监控面板，由中心端 `vps
 
 默认示例域名：`https://www.monitor.party`
 
+## 严重升级提示
+
+本次更新缩减了发布文件体积，清理了历史残留的前端构建文件，并重新生成了内嵌前端和 release 二进制。更新过程中如果替换、卸载或导入操作不当，可能会造成节点、套餐信息、站点设置或 token 数据丢失。升级前请务必备份中心端数据文件：
+
+```bash
+sudo cp /var/lib/vps-monitor/server.json /var/lib/vps-monitor/server.json.bak.$(date +%Y%m%d%H%M%S)
+```
+
+如果已进入后台，也建议先使用「节点管理」里的「一键导出」导出节点备份 JSON，再执行升级。
+
+## 本次更新
+
+- Agent 新增系统/负载采集字段：真实主机名、发行版、内核、CPU 架构、虚拟化、CPU 型号、物理/逻辑核心、磁盘读写速率和进程数。
+- Server 将新增 Agent 字段透传到 WebSocket 的 `Host` / `State` 数据中，前台展开节点详情即可查看。
+- 前台详情页补充系统、内核、CPU、磁盘读写、进程、TCP / UDP、运行时长、数据更新时间等展示。
+- 后台节点管理新增「一键导出 / 一键导入」，导出 JSON 备份，导入时合并节点和套餐信息，不主动删除现有节点。
+- Release 构建脚本现在会自动构建并同步前端，再编译中心端，避免漏嵌前端资源。
+- 清理历史残留的前端 hash 产物，`vps-server` 发布文件体积明显缩小。
+
 ## 功能
 
 - 一体化中心端：公开面板、管理后台、API、WebSocket、Agent 下载均由 `vps-server` 提供。

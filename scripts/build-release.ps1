@@ -3,8 +3,24 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path "$PSScriptRoot\.."
 $release = Join-Path $root "release"
 $embedBins = Join-Path $root "internal\server\agent_bins"
+$web = Join-Path $root "web"
+$webDist = Join-Path $web "dist"
+$embedWebDist = Join-Path $root "internal\server\web\dist"
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 New-Item -ItemType Directory -Force -Path $embedBins | Out-Null
+
+Push-Location $web
+try {
+  npm run build
+} finally {
+  Pop-Location
+}
+
+if (Test-Path $embedWebDist) {
+  Remove-Item $embedWebDist -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path (Split-Path $embedWebDist -Parent) | Out-Null
+Copy-Item $webDist $embedWebDist -Recurse -Force
 
 $targets = @(
   @{ OS = "linux"; Arch = "amd64"; Arm = "" },

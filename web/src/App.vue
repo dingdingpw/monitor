@@ -8,7 +8,7 @@ import NetOut from "@/components/NetOut.vue";
 import axios from "axios";
 import { Message } from "@arco-design/web-vue";
 import StatsCard from "@/components/StatsCard.vue";
-import {formatBytes, formatTimeStamp, formatUptime, calculateRemainingDays} from '@/utils/utils'
+import {formatAgo, formatBytes, formatTimeStamp, formatUptime, formatUptimeZh, calculateRemainingDays} from '@/utils/utils'
 import HeaderLocale from "@/components/HeaderLocale.vue";
 import {useI18n} from "vue-i18n";
 
@@ -234,6 +234,17 @@ const diskPercent = (item) => {
   return item.State.DiskUsed / item.State.DiskTotal * 100
 }
 
+const memoryPercent = (item) => {
+  if (!item.Host.MemTotal) return 0
+  return item.State.MemUsed / item.Host.MemTotal * 100
+}
+
+const cpuCoresText = (item) => {
+  const physical = item.Host.PhysicalCores || item.Host.LogicalCores || item.Host.CPU?.length || 0
+  const logical = item.Host.LogicalCores || item.Host.CPU?.length || physical
+  return `${physical} 物理 / ${logical} 逻辑`
+}
+
 const normalizeDueTime = (value) => {
   if (!value) return 0
   return Number(value) > 0 && Number(value) < 1000000000000 ? Number(value) * 1000 : value
@@ -285,7 +296,7 @@ provide('handleChangeType', handleChangeType)
         </div>
         <div class="platform">
           <div class="monitor-item-title">{{ $t('system') }}</div>
-          <div class="monitor-item-value">{{item.Host.Platform}} {{item.Host.PlatformVersion}}</div>
+          <div class="monitor-item-value">{{item.Host.Platform}}</div>
         </div>
         <div class="cpu">
           <div class="monitor-item-title">CPU</div>
@@ -294,8 +305,8 @@ provide('handleChangeType', handleChangeType)
         </div>
         <div class="mem">
           <div class="monitor-item-title">{{ $t('memory') }}</div>
-          <div class="monitor-item-value">{{(item.State.MemUsed / item.Host.MemTotal * 100).toFixed(2) + '%'}}</div>
-          <a-progress class="monitor-item-progress" :status="progressStatus(item.State.MemUsed / item.Host.MemTotal * 100)" :percent="item.State.MemUsed / item.Host.MemTotal" :show-text="false" style="width: 60px" />
+          <div class="monitor-item-value">{{memoryPercent(item).toFixed(2) + '%'}}</div>
+          <a-progress class="monitor-item-progress" :status="progressStatus(memoryPercent(item))" :percent="memoryPercent(item)/100" :show-text="false" style="width: 60px" />
         </div>
         <div class="disk">
           <div class="monitor-item-title">硬盘</div>
@@ -347,33 +358,70 @@ provide('handleChangeType', handleChangeType)
           </div>
           <a-row>
             <a-col :span="10" :xs="24" :sm="24" :md="10" :lg="10" :sl="10">
+              <div class="detail-section-title">系统</div>
               <div class="detail-item-list">
                 <div class="detail-item">
                   <div class="name">{{ $t('hostname') }}</div>
-                  <div class="value">{{item.Host.Name}}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="name">{{ $t('area') }}</div>
-                  <div class="value">
-                    <span :class="`flag-icon flag-icon-${item.Host.Name.slice(0, 2).replace('UK', 'GB').toLowerCase()}`"></span>
-                    {{item.Host.Name.slice(0, 2).toUpperCase()}}
-                  </div>
+                  <div class="value">{{item.Host.Hostname || item.Host.Name}}</div>
                 </div>
                 <div class="detail-item">
                   <div class="name">{{ $t('system') }}</div>
-                  <div class="value">{{item.Host.Platform}} {{item.Host.PlatformVersion}}</div>
+                  <div class="value">{{item.Host.Platform}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">内核</div>
+                  <div class="value">{{item.Host.Kernel || item.Host.PlatformVersion || '-'}}</div>
                 </div>
                 <div class="detail-item">
                   <div class="name">{{ $t('arch') }}</div>
-                  <div class="value">{{item.Host.Arch}}</div>
+                  <div class="value">{{item.Host.Arch || '-'}}</div>
                 </div>
                 <div class="detail-item">
                   <div class="name">{{ $t('virtualization') }}</div>
                   <div class="value">{{item.Host.Virtualization || '-'}}</div>
                 </div>
                 <div class="detail-item">
-                  <div class="name">CPU</div>
-                  <div class="value">{{item.Host.CPU.join(',')}}</div>
+                  <div class="name">CPU 型号</div>
+                  <div class="value">{{item.Host.CPUModel || '-'}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">核心</div>
+                  <div class="value">{{cpuCoresText(item)}}</div>
+                </div>
+              </div>
+              <div class="detail-section-title">网络与负载</div>
+              <div class="detail-item-list">
+                <div class="detail-item">
+                  <div class="name">累计接收</div>
+                  <div class="value">{{formatBytes(item.State.NetInTransfer)}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">累计发送</div>
+                  <div class="value">{{formatBytes(item.State.NetOutTransfer)}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">磁盘读</div>
+                  <div class="value">{{formatBytes(item.State.DiskReadSpeed)}}/s</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">磁盘写</div>
+                  <div class="value">{{formatBytes(item.State.DiskWriteSpeed)}}/s</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">进程数</div>
+                  <div class="value">{{item.State.Processes || 0}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">TCP / UDP</div>
+                  <div class="value">{{item.State.TCP || 0}} / {{item.State.UDP || 0}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">运行时长</div>
+                  <div class="value">{{formatUptimeZh(item.State.Uptime)}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">数据更新</div>
+                  <div class="value">{{formatAgo(item.TimeStamp)}}</div>
                 </div>
                 <div class="detail-item">
                   <div class="name">CPU{{ $t('use') }}</div>
@@ -381,7 +429,7 @@ provide('handleChangeType', handleChangeType)
                 </div>
                 <div class="detail-item">
                   <div class="name">{{ $t('memory') }}</div>
-                  <div class="value">{{(item.State.MemUsed / item.Host.MemTotal * 100).toFixed(2) + '%'}} ({{formatBytes(item.State.MemUsed)}} / {{formatBytes(item.Host.MemTotal)}})</div>
+                  <div class="value">{{memoryPercent(item).toFixed(2) + '%'}} ({{formatBytes(item.State.MemUsed)}} / {{formatBytes(item.Host.MemTotal)}})</div>
                 </div>
                 <div class="detail-item">
                   <div class="name">{{ $t('swap') }}</div>
@@ -407,12 +455,8 @@ provide('handleChangeType', handleChangeType)
                   <div class="value">{{`${item.State.Load1} | ${item.State.Load5} | ${item.State.Load15}`}}</div>
                 </div>
                 <div class="detail-item">
-                  <div class="name">{{ $t('bandwidth') }}↑|↓</div>
-                  <div class="value">{{formatBytes(item.State.NetOutTransfer)}} | {{formatBytes(item.State.NetInTransfer)}}</div>
-                </div>
-                <div class="detail-item">
                   <div class="name">{{ $t('uptime') }}</div>
-                  <div class="value">{{formatTimeStamp(item.Host.BootTime)}}</div>
+                  <div class="value">{{formatUptimeZh(item.State.Uptime)}}</div>
                 </div>
                 <div class="detail-item">
                   <div class="name">{{ $t('report-time') }}</div>
@@ -676,6 +720,13 @@ a {
 
       .detail-item-list {
         margin-bottom: 20px;
+      }
+
+      .detail-section-title {
+        margin: 12px 0 8px;
+        font-size: 13px;
+        font-weight: 800;
+        color: #111827;
       }
 
       .purchase-info {
@@ -953,6 +1004,10 @@ body[arco-theme='dark'] {
         }
 
         .detail-item-list {
+          .detail-section-title {
+            color: #ffffff;
+          }
+
           .detail-item {
             .name {
               color: #999999;

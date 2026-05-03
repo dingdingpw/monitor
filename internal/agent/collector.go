@@ -13,29 +13,41 @@ import (
 type Collector struct {
 	cfg config.Config
 
-	mu       sync.Mutex
-	lastCPU  cpuTimes
-	lastNet  netCounters
-	lastTime time.Time
+	mu         sync.Mutex
+	lastCPU    cpuTimes
+	lastNet    netCounters
+	lastDiskIO diskCounters
+	lastTime   time.Time
 
-	disks       []Disk
-	conns       *Connections
-	lastDisk    time.Time
-	lastConn    time.Time
-	staticHost  string
-	staticCores int
-	staticOS    string
-	staticArch  string
+	disks                []Disk
+	conns                *Connections
+	lastDisk             time.Time
+	lastConn             time.Time
+	staticHost           string
+	staticCores          int
+	staticPhysicalCores  int
+	staticOS             string
+	staticOSName         string
+	staticArch           string
+	staticKernel         string
+	staticVirtualization string
+	staticCPUModel       string
 }
 
 func NewCollector(cfg config.Config) *Collector {
 	host, _ := os.Hostname()
+	hostInfo := readHostInfo()
 	return &Collector{
-		cfg:         cfg,
-		staticHost:  host,
-		staticCores: runtime.NumCPU(),
-		staticOS:    runtime.GOOS,
-		staticArch:  runtime.GOARCH,
+		cfg:                  cfg,
+		staticHost:           host,
+		staticCores:          runtime.NumCPU(),
+		staticPhysicalCores:  hostInfo.PhysicalCores,
+		staticOS:             runtime.GOOS,
+		staticOSName:         hostInfo.OSName,
+		staticArch:           runtime.GOARCH,
+		staticKernel:         hostInfo.Kernel,
+		staticVirtualization: hostInfo.Virtualization,
+		staticCPUModel:       hostInfo.CPUModel,
 	}
 }
 
@@ -55,6 +67,7 @@ func (c *Collector) Collect(ctx context.Context) (Metrics, error) {
 	load, _ := readLoad()
 	uptime, _ := readUptime()
 	netNow, _ := readNetwork(c.cfg.NetworkExclude)
+	diskIONow, _ := readDiskCounters()
 
 	if c.lastDisk.IsZero() || now.Sub(c.lastDisk) >= c.cfg.DiskInterval {
 		if disks, err := readDisks(c.cfg.Mounts, c.cfg.DiskExcludeFS); err == nil {
@@ -72,6 +85,8 @@ func (c *Collector) Collect(ctx context.Context) (Metrics, error) {
 	cpuUsage := 0.0
 	rxRate := uint64(0)
 	txRate := uint64(0)
+	diskReadRate := uint64(0)
+	diskWriteRate := uint64(0)
 	if !c.lastTime.IsZero() {
 		elapsed := now.Sub(c.lastTime).Seconds()
 		cpuUsage = cpuNow.usageSince(c.lastCPU)
@@ -82,11 +97,18 @@ func (c *Collector) Collect(ctx context.Context) (Metrics, error) {
 			if netNow.tx >= c.lastNet.tx {
 				txRate = uint64(float64(netNow.tx-c.lastNet.tx) / elapsed)
 			}
+			if diskIONow.read >= c.lastDiskIO.read {
+				diskReadRate = uint64(float64(diskIONow.read-c.lastDiskIO.read) / elapsed)
+			}
+			if diskIONow.write >= c.lastDiskIO.write {
+				diskWriteRate = uint64(float64(diskIONow.write-c.lastDiskIO.write) / elapsed)
+			}
 		}
 	}
 
 	c.lastCPU = cpuNow
 	c.lastNet = netNow
+	c.lastDiskIO = diskIONow
 	c.lastTime = now
 
 	select {
@@ -96,19 +118,24 @@ func (c *Collector) Collect(ctx context.Context) (Metrics, error) {
 	}
 
 	return Metrics{
-		NodeID:    c.cfg.NodeID,
-		Timestamp: now.Unix(),
-		OS:        c.staticOS,
-		Arch:      c.staticArch,
-		Hostname:  c.staticHost,
-		CPU:       CPU{UsagePercent: round2(cpuUsage), Cores: c.staticCores},
-		Memory:    mem,
-		Swap:      swap,
-		Load:      load,
-		Uptime:    uptime,
-		Disks:     c.disks,
-		Network:   Network{RxBytes: netNow.rx, TxBytes: netNow.tx, RxRate: rxRate, TxRate: txRate},
-		Conns:     c.conns,
+		NodeID:         c.cfg.NodeID,
+		Timestamp:      now.Unix(),
+		OS:             c.staticOS,
+		Arch:           c.staticArch,
+		Hostname:       c.staticHost,
+		Kernel:         c.staticKernel,
+		OSName:         c.staticOSName,
+		Virtualization: c.staticVirtualization,
+		CPU:            CPU{UsagePercent: round2(cpuUsage), Cores: c.staticCores, PhysicalCores: c.staticPhysicalCores, ModelName: c.staticCPUModel},
+		Memory:         mem,
+		Swap:           swap,
+		Load:           load,
+		Uptime:         uptime,
+		Disks:          c.disks,
+		Network:        Network{RxBytes: netNow.rx, TxBytes: netNow.tx, RxRate: rxRate, TxRate: txRate},
+		DiskIO:         DiskIO{ReadRate: diskReadRate, WriteRate: diskWriteRate},
+		Conns:          c.conns,
+		Processes:      readProcessCount(),
 	}, nil
 }
 
@@ -136,4 +163,17 @@ func (c cpuTimes) usageSince(prev cpuTimes) float64 {
 type netCounters struct {
 	rx uint64
 	tx uint64
+}
+
+type diskCounters struct {
+	read  uint64
+	write uint64
+}
+
+type HostStaticInfo struct {
+	Kernel         string
+	OSName         string
+	Virtualization string
+	CPUModel       string
+	PhysicalCores  int
 }

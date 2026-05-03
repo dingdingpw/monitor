@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -224,6 +225,147 @@ func readConnections() (Connections, error) {
 	tcp := countProcNet("/proc/net/tcp") + countProcNet("/proc/net/tcp6")
 	udp := countProcNet("/proc/net/udp") + countProcNet("/proc/net/udp6")
 	return Connections{TCP: tcp, UDP: udp}, nil
+}
+
+func readDiskCounters() (diskCounters, error) {
+	data, err := os.ReadFile("/proc/diskstats")
+	if err != nil {
+		return diskCounters{}, err
+	}
+	var total diskCounters
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 14 || !linuxLikelyBlockDevice(fields[2]) {
+			continue
+		}
+		sectorsRead, _ := strconv.ParseUint(fields[5], 10, 64)
+		sectorsWritten, _ := strconv.ParseUint(fields[9], 10, 64)
+		total.read += sectorsRead * 512
+		total.write += sectorsWritten * 512
+	}
+	return total, scanner.Err()
+}
+
+func readProcessCount() int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() && isDigits(entry.Name()) {
+			count++
+		}
+	}
+	return count
+}
+
+func readHostInfo() HostStaticInfo {
+	info := HostStaticInfo{Kernel: readTrimmed("/proc/sys/kernel/osrelease"), OSName: readOSName(), Virtualization: readVirtualization()}
+	info.CPUModel, info.PhysicalCores = readCPUDetails()
+	return info
+}
+
+func readOSName() string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return "Linux"
+	}
+	values := map[string]string{}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), "=")
+		if ok {
+			values[key] = strings.Trim(value, "\"")
+		}
+	}
+	if pretty := values["PRETTY_NAME"]; pretty != "" {
+		return "Linux (" + pretty + ")"
+	}
+	if name := values["NAME"]; name != "" {
+		return "Linux (" + name + ")"
+	}
+	return "Linux"
+}
+
+func readCPUDetails() (string, int) {
+	data, err := os.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		return "", runtime.NumCPU()
+	}
+	model := ""
+	physicalIDs := map[string]bool{}
+	coreIDs := map[string]bool{}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	currentPhysicalID := "0"
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		switch key {
+		case "model name":
+			if model == "" {
+				model = value
+			}
+		case "physical id":
+			currentPhysicalID = value
+			physicalIDs[value] = true
+		case "core id":
+			coreIDs[currentPhysicalID+":"+value] = true
+		}
+	}
+	physicalCores := len(coreIDs)
+	if physicalCores == 0 {
+		physicalCores = len(physicalIDs)
+	}
+	if physicalCores == 0 {
+		physicalCores = runtime.NumCPU()
+	}
+	return model, physicalCores
+}
+
+func readVirtualization() string {
+	if product := strings.ToLower(readTrimmed("/sys/class/dmi/id/product_name")); product != "" {
+		switch {
+		case strings.Contains(product, "kvm") || strings.Contains(product, "qemu"):
+			return "qemu"
+		case strings.Contains(product, "vmware"):
+			return "vmware"
+		case strings.Contains(product, "virtualbox"):
+			return "virtualbox"
+		case strings.Contains(product, "hyper-v") || strings.Contains(product, "virtual machine"):
+			return "hyper-v"
+		}
+	}
+	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil && bytes.Contains(bytes.ToLower(data), []byte("hypervisor")) {
+		return "virtualized"
+	}
+	return ""
+}
+
+func readTrimmed(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func linuxLikelyBlockDevice(name string) bool {
+	return strings.HasPrefix(name, "sd") || strings.HasPrefix(name, "vd") || strings.HasPrefix(name, "xvd") || strings.HasPrefix(name, "nvme")
+}
+
+func isDigits(value string) bool {
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return value != ""
 }
 
 func linuxMountTypes() map[string]string {
