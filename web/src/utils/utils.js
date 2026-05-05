@@ -53,6 +53,15 @@ export const formatTimeStamp = (timestamp) => {
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
+export const formatDateStamp = (timestamp) => {
+    if (!timestamp) return '-';
+    const date = new Date(timestamp * 1000);
+    const year = date.getFullYear();
+    const month = ('0' + (date.getMonth() + 1)).slice(-2);
+    const day = ('0' + date.getDate()).slice(-2);
+    return `${year}-${month}-${day}`;
+}
+
 export const formatUptime = (seconds) => {
     seconds = Number(seconds) || 0;
     const days = Math.floor(seconds / (24 * 3600));

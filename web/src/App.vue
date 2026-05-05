@@ -8,7 +8,7 @@ import NetOut from "@/components/NetOut.vue";
 import axios from "axios";
 import { Message } from "@arco-design/web-vue";
 import StatsCard from "@/components/StatsCard.vue";
-import {formatAgo, formatBytes, formatTimeStamp, formatUptime, formatUptimeZh, calculateRemainingDays} from '@/utils/utils'
+import {formatAgo, formatBytes, formatDateStamp, formatTimeStamp, formatUptime, formatUptimeZh, calculateRemainingDays} from '@/utils/utils'
 import HeaderLocale from "@/components/HeaderLocale.vue";
 import {useI18n} from "vue-i18n";
 
@@ -398,6 +398,22 @@ provide('handleChangeType', handleChangeType)
                 <div class="detail-item">
                   <div class="name">累计发送</div>
                   <div class="value">{{formatBytes(item.State.NetOutTransfer)}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">本周期接收</div>
+                  <div class="value">{{formatBytes(item.State.CycleNetInTransfer)}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">本周期发送</div>
+                  <div class="value">{{formatBytes(item.State.CycleNetOutTransfer)}}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">流量重置日</div>
+                  <div class="value">每月 {{item.State.TrafficResetDay || 1}} 日</div>
+                </div>
+                <div class="detail-item">
+                  <div class="name">下次重置</div>
+                  <div class="value">{{formatDateStamp(item.State.TrafficNextReset)}}</div>
                 </div>
                 <div class="detail-item">
                   <div class="name">磁盘读</div>

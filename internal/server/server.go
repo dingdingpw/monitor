@@ -702,6 +702,9 @@ type Store struct {
 	Infos    map[string]HostInfo      `json:"infos"`
 	Planned  map[string]PlannedNode   `json:"planned"`
 	Settings Settings                 `json:"settings"`
+	Traffic  map[string]TrafficStat   `json:"traffic"`
+
+	lastTrafficSave time.Time `json:"-"`
 }
 
 type Settings struct {
@@ -736,16 +739,28 @@ type NodeBackupRecord struct {
 }
 
 type HostInfo struct {
-	Name       string `json:"name"`
-	DueTime    int64  `json:"due_time"`
-	BuyURL     string `json:"buy_url"`
-	Seller     string `json:"seller"`
-	Price      string `json:"price"`
-	Cycle      string `json:"cycle"`
-	Bandwidth  string `json:"bandwidth"`
-	Traffic    string `json:"traffic"`
-	Show       bool   `json:"show_purchase_info"`
-	AuthSecret string `json:"auth_secret,omitempty"`
+	Name            string `json:"name"`
+	DueTime         int64  `json:"due_time"`
+	BuyURL          string `json:"buy_url"`
+	Seller          string `json:"seller"`
+	Price           string `json:"price"`
+	Cycle           string `json:"cycle"`
+	Bandwidth       string `json:"bandwidth"`
+	Traffic         string `json:"traffic"`
+	TrafficResetDay int    `json:"traffic_reset_day"`
+	Show            bool   `json:"show_purchase_info"`
+	AuthSecret      string `json:"auth_secret,omitempty"`
+}
+
+type TrafficStat struct {
+	ResetDay    int    `json:"reset_day"`
+	PeriodStart int64  `json:"period_start"`
+	NextReset   int64  `json:"next_reset"`
+	LastRxBytes uint64 `json:"last_rx_bytes"`
+	LastTxBytes uint64 `json:"last_tx_bytes"`
+	RxTotal     uint64 `json:"rx_total"`
+	TxTotal     uint64 `json:"tx_total"`
+	UpdatedAt   int64  `json:"updated_at"`
 }
 
 type AkileHost struct {
@@ -771,29 +786,34 @@ type AkileHostMeta struct {
 }
 
 type AkileHostState struct {
-	CPU            float64      `json:"CPU"`
-	MemUsed        uint64       `json:"MemUsed"`
-	SwapUsed       uint64       `json:"SwapUsed"`
-	DiskUsed       uint64       `json:"DiskUsed"`
-	DiskTotal      uint64       `json:"DiskTotal"`
-	Disks          []agent.Disk `json:"Disks"`
-	NetInTransfer  uint64       `json:"NetInTransfer"`
-	NetOutTransfer uint64       `json:"NetOutTransfer"`
-	NetInSpeed     uint64       `json:"NetInSpeed"`
-	NetOutSpeed    uint64       `json:"NetOutSpeed"`
-	DiskReadSpeed  uint64       `json:"DiskReadSpeed"`
-	DiskWriteSpeed uint64       `json:"DiskWriteSpeed"`
-	TCP            int          `json:"TCP"`
-	UDP            int          `json:"UDP"`
-	Processes      int          `json:"Processes"`
-	Load1          float64      `json:"Load1"`
-	Load5          float64      `json:"Load5"`
-	Load15         float64      `json:"Load15"`
-	Uptime         uint64       `json:"Uptime"`
+	CPU                 float64      `json:"CPU"`
+	MemUsed             uint64       `json:"MemUsed"`
+	SwapUsed            uint64       `json:"SwapUsed"`
+	DiskUsed            uint64       `json:"DiskUsed"`
+	DiskTotal           uint64       `json:"DiskTotal"`
+	Disks               []agent.Disk `json:"Disks"`
+	NetInTransfer       uint64       `json:"NetInTransfer"`
+	NetOutTransfer      uint64       `json:"NetOutTransfer"`
+	NetInSpeed          uint64       `json:"NetInSpeed"`
+	NetOutSpeed         uint64       `json:"NetOutSpeed"`
+	DiskReadSpeed       uint64       `json:"DiskReadSpeed"`
+	DiskWriteSpeed      uint64       `json:"DiskWriteSpeed"`
+	TCP                 int          `json:"TCP"`
+	UDP                 int          `json:"UDP"`
+	Processes           int          `json:"Processes"`
+	Load1               float64      `json:"Load1"`
+	Load5               float64      `json:"Load5"`
+	Load15              float64      `json:"Load15"`
+	Uptime              uint64       `json:"Uptime"`
+	CycleNetInTransfer  uint64       `json:"CycleNetInTransfer"`
+	CycleNetOutTransfer uint64       `json:"CycleNetOutTransfer"`
+	TrafficResetDay     int          `json:"TrafficResetDay"`
+	TrafficPeriodStart  int64        `json:"TrafficPeriodStart"`
+	TrafficNextReset    int64        `json:"TrafficNextReset"`
 }
 
 func NewStore(path string) (*Store, error) {
-	s := &Store{path: path, Reports: map[string]agent.Metrics{}, Infos: map[string]HostInfo{}, Planned: map[string]PlannedNode{}, Settings: Settings{SiteName: "Monitor Party"}}
+	s := &Store{path: path, Reports: map[string]agent.Metrics{}, Infos: map[string]HostInfo{}, Planned: map[string]PlannedNode{}, Settings: Settings{SiteName: "Monitor Party"}, Traffic: map[string]TrafficStat{}}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -814,6 +834,9 @@ func NewStore(path string) (*Store, error) {
 	}
 	if s.Planned == nil {
 		s.Planned = map[string]PlannedNode{}
+	}
+	if s.Traffic == nil {
+		s.Traffic = map[string]TrafficStat{}
 	}
 	if s.Settings.SiteName == "" {
 		s.Settings.SiteName = "Monitor Party"
@@ -847,6 +870,7 @@ func (s *Store) UpsertReport(metrics agent.Metrics, maxNodes int) error {
 	if _, ok := s.Planned[metrics.NodeID]; !ok {
 		s.Planned[metrics.NodeID] = PlannedNode{NodeID: metrics.NodeID, CreatedAt: time.Now().Unix()}
 	}
+	s.updateTrafficLocked(metrics)
 	return nil
 }
 
@@ -888,7 +912,9 @@ func (s *Store) UpsertInfo(info HostInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info.AuthSecret = ""
+	info.TrafficResetDay = normalizeTrafficResetDay(info.TrafficResetDay)
 	s.Infos[info.Name] = info
+	s.syncTrafficResetDayLocked(info.Name, info.TrafficResetDay)
 	s.saveLocked()
 }
 
@@ -898,6 +924,7 @@ func (s *Store) Delete(name string) {
 	delete(s.Reports, name)
 	delete(s.Planned, name)
 	delete(s.Infos, name)
+	delete(s.Traffic, name)
 	s.saveLocked()
 }
 
@@ -917,7 +944,7 @@ func (s *Store) AkileHosts() []AkileHost {
 	defer s.mu.RUnlock()
 	out := make([]AkileHost, 0, len(s.Planned)+len(s.Reports))
 	for _, m := range s.Reports {
-		out = append(out, toAkileHost(m))
+		out = append(out, toAkileHost(m, s.Traffic[m.NodeID]))
 	}
 	for name := range s.Planned {
 		if _, ok := s.Reports[name]; ok {
@@ -976,6 +1003,7 @@ func (s *Store) ExportNodes() NodeBackup {
 		planned := s.Planned[name]
 		info := s.Infos[name]
 		info.AuthSecret = ""
+		info.TrafficResetDay = normalizeTrafficResetDay(info.TrafficResetDay)
 		out.Nodes = append(out.Nodes, NodeBackupRecord{NodeID: name, CreatedAt: planned.CreatedAt, TokenHash: planned.TokenHash, Info: info})
 	}
 	sort.Slice(out.Nodes, func(i, j int) bool { return out.Nodes[i].NodeID < out.Nodes[j].NodeID })
@@ -1018,13 +1046,121 @@ func (s *Store) ImportNodes(backup NodeBackup, maxNodes int) (int, error) {
 		info := record.Info
 		info.Name = nodeID
 		info.AuthSecret = ""
+		info.TrafficResetDay = normalizeTrafficResetDay(info.TrafficResetDay)
 		s.Infos[nodeID] = info
+		s.syncTrafficResetDayLocked(nodeID, info.TrafficResetDay)
 		imported++
 	}
 	if imported > 0 {
 		s.saveLocked()
 	}
 	return imported, nil
+}
+
+func (s *Store) updateTrafficLocked(metrics agent.Metrics) {
+	now := time.Now()
+	resetDay := normalizeTrafficResetDay(s.Infos[metrics.NodeID].TrafficResetDay)
+	stat := s.Traffic[metrics.NodeID]
+	if stat.ResetDay == 0 {
+		start, next := trafficPeriod(now, resetDay)
+		stat = TrafficStat{ResetDay: resetDay, PeriodStart: start.Unix(), NextReset: next.Unix(), LastRxBytes: metrics.Network.RxBytes, LastTxBytes: metrics.Network.TxBytes, UpdatedAt: now.Unix()}
+		s.Traffic[metrics.NodeID] = stat
+		s.saveTrafficLocked(false, now)
+		return
+	}
+	if stat.ResetDay != resetDay {
+		stat.ResetDay = resetDay
+		stat.NextReset = nextTrafficReset(now, resetDay).Unix()
+	}
+	resetHappened := false
+	if stat.NextReset == 0 || now.Unix() >= stat.NextReset {
+		start, next := trafficPeriod(now, resetDay)
+		stat.PeriodStart = start.Unix()
+		stat.NextReset = next.Unix()
+		stat.RxTotal = 0
+		stat.TxTotal = 0
+		stat.LastRxBytes = metrics.Network.RxBytes
+		stat.LastTxBytes = metrics.Network.TxBytes
+		stat.UpdatedAt = now.Unix()
+		s.Traffic[metrics.NodeID] = stat
+		s.saveTrafficLocked(true, now)
+		return
+	}
+	if metrics.Network.RxBytes >= stat.LastRxBytes {
+		stat.RxTotal += metrics.Network.RxBytes - stat.LastRxBytes
+	}
+	if metrics.Network.TxBytes >= stat.LastTxBytes {
+		stat.TxTotal += metrics.Network.TxBytes - stat.LastTxBytes
+	}
+	stat.LastRxBytes = metrics.Network.RxBytes
+	stat.LastTxBytes = metrics.Network.TxBytes
+	stat.UpdatedAt = now.Unix()
+	s.Traffic[metrics.NodeID] = stat
+	s.saveTrafficLocked(resetHappened, now)
+}
+
+func (s *Store) syncTrafficResetDayLocked(nodeID string, resetDay int) {
+	resetDay = normalizeTrafficResetDay(resetDay)
+	stat := s.Traffic[nodeID]
+	if stat.ResetDay == resetDay {
+		return
+	}
+	now := time.Now()
+	stat.ResetDay = resetDay
+	stat.NextReset = nextTrafficReset(now, resetDay).Unix()
+	if stat.PeriodStart == 0 {
+		start, next := trafficPeriod(now, resetDay)
+		stat.PeriodStart = start.Unix()
+		stat.NextReset = next.Unix()
+	}
+	s.Traffic[nodeID] = stat
+}
+
+func (s *Store) saveTrafficLocked(force bool, now time.Time) {
+	if !force && !s.lastTrafficSave.IsZero() && now.Sub(s.lastTrafficSave) < time.Minute {
+		return
+	}
+	s.lastTrafficSave = now
+	s.saveLocked()
+}
+
+func normalizeTrafficResetDay(day int) int {
+	if day < 1 {
+		return 1
+	}
+	if day > 31 {
+		return 31
+	}
+	return day
+}
+
+func trafficPeriod(now time.Time, resetDay int) (time.Time, time.Time) {
+	resetDay = normalizeTrafficResetDay(resetDay)
+	current := resetTime(now.Year(), now.Month(), resetDay, now.Location())
+	if now.Before(current) {
+		prev := now.AddDate(0, -1, 0)
+		return resetTime(prev.Year(), prev.Month(), resetDay, now.Location()), current
+	}
+	next := now.AddDate(0, 1, 0)
+	return current, resetTime(next.Year(), next.Month(), resetDay, now.Location())
+}
+
+func nextTrafficReset(now time.Time, resetDay int) time.Time {
+	_, next := trafficPeriod(now, resetDay)
+	return next
+}
+
+func resetTime(year int, month time.Month, day int, loc *time.Location) time.Time {
+	day = normalizeTrafficResetDay(day)
+	lastDay := daysInMonth(year, month, loc)
+	if day > lastDay {
+		day = lastDay
+	}
+	return time.Date(year, month, day, 0, 0, 0, 0, loc)
+}
+
+func daysInMonth(year int, month time.Month, loc *time.Location) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, loc).Day()
 }
 
 func (s *Store) saveLocked() {
@@ -1045,7 +1181,7 @@ func (s *Store) saveLocked() {
 	}
 }
 
-func toAkileHost(m agent.Metrics) AkileHost {
+func toAkileHost(m agent.Metrics, traffic TrafficStat) AkileHost {
 	diskUsed := uint64(0)
 	diskTotal := uint64(0)
 	for _, disk := range m.Disks {
@@ -1080,25 +1216,30 @@ func toAkileHost(m agent.Metrics) AkileHost {
 			SwapTotal:       m.Swap.Total,
 		},
 		State: AkileHostState{
-			CPU:            m.CPU.UsagePercent,
-			MemUsed:        m.Memory.Used,
-			SwapUsed:       m.Swap.Used,
-			DiskUsed:       diskUsed,
-			DiskTotal:      diskTotal,
-			Disks:          m.Disks,
-			NetInTransfer:  m.Network.RxBytes,
-			NetOutTransfer: m.Network.TxBytes,
-			NetInSpeed:     m.Network.RxRate,
-			NetOutSpeed:    m.Network.TxRate,
-			DiskReadSpeed:  m.DiskIO.ReadRate,
-			DiskWriteSpeed: m.DiskIO.WriteRate,
-			TCP:            conns.TCP,
-			UDP:            conns.UDP,
-			Processes:      m.Processes,
-			Load1:          m.Load.Load1,
-			Load5:          m.Load.Load5,
-			Load15:         m.Load.Load15,
-			Uptime:         m.Uptime,
+			CPU:                 m.CPU.UsagePercent,
+			MemUsed:             m.Memory.Used,
+			SwapUsed:            m.Swap.Used,
+			DiskUsed:            diskUsed,
+			DiskTotal:           diskTotal,
+			Disks:               m.Disks,
+			NetInTransfer:       m.Network.RxBytes,
+			NetOutTransfer:      m.Network.TxBytes,
+			NetInSpeed:          m.Network.RxRate,
+			NetOutSpeed:         m.Network.TxRate,
+			DiskReadSpeed:       m.DiskIO.ReadRate,
+			DiskWriteSpeed:      m.DiskIO.WriteRate,
+			TCP:                 conns.TCP,
+			UDP:                 conns.UDP,
+			Processes:           m.Processes,
+			Load1:               m.Load.Load1,
+			Load5:               m.Load.Load5,
+			Load15:              m.Load.Load15,
+			Uptime:              m.Uptime,
+			CycleNetInTransfer:  traffic.RxTotal,
+			CycleNetOutTransfer: traffic.TxTotal,
+			TrafficResetDay:     normalizeTrafficResetDay(traffic.ResetDay),
+			TrafficPeriodStart:  traffic.PeriodStart,
+			TrafficNextReset:    traffic.NextReset,
 		},
 		TimeStamp: m.Timestamp,
 	}
